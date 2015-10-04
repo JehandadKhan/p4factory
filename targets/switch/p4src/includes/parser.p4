@@ -1,5 +1,5 @@
 /*
-Copyright 2013-present Barefoot Networks, Inc.
+Copyright 2013-present Barefoot Networks, Inc. 
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,10 +18,11 @@ limitations under the License.
 //#define ADV_FEATURES
 
 parser start {
-    set_metadata(ingress_metadata.drop_0, 0);
     return parse_ethernet;
 }
 
+#define ETHERTYPE_BF_FABRIC    0x9000
+#define ETHERTYPE_BF_SFLOW     0x9001
 #define ETHERTYPE_VLAN         0x8100, 0x9100
 #define ETHERTYPE_MPLS         0x8847
 #define ETHERTYPE_IPV4         0x0800
@@ -36,19 +37,20 @@ parser start {
 #define ETHERTYPE_VNTAG        0x8926
 #define ETHERTYPE_LLDP         0x88cc
 #define ETHERTYPE_LACP         0x8809
-#define ETHERTYPE_SFLOW        0x9001
 
 #define IPV4_MULTICAST_MAC 0x01005E
 #define IPV6_MULTICAST_MAC 0x3333
 
 /* Tunnel types */
-#define TUNNEL_TYPE_NONE               0
-#define TUNNEL_TYPE_VXLAN              1
-#define TUNNEL_TYPE_GRE                2
-#define TUNNEL_TYPE_GENEVE             3 
-#define TUNNEL_TYPE_NVGRE              4
-#define TUNNEL_TYPE_MPLS_L2VPN         5
-#define TUNNEL_TYPE_MPLS_L3VPN         6 
+#define INGRESS_TUNNEL_TYPE_NONE               0
+#define INGRESS_TUNNEL_TYPE_VXLAN              1
+#define INGRESS_TUNNEL_TYPE_GRE                2
+#define INGRESS_TUNNEL_TYPE_IP_IN_IP           3
+#define INGRESS_TUNNEL_TYPE_GENEVE             4
+#define INGRESS_TUNNEL_TYPE_NVGRE              5
+#define INGRESS_TUNNEL_TYPE_MPLS_L2VPN         6
+#define INGRESS_TUNNEL_TYPE_MPLS_L3VPN         9
+#define INGRESS_TUNNEL_TYPE_VXLAN_GPE          12
 
 #ifndef ADV_FEATURES
 #define PARSE_ETHERTYPE                                    \
@@ -57,10 +59,6 @@ parser start {
         ETHERTYPE_IPV4 : parse_ipv4;                       \
         ETHERTYPE_IPV6 : parse_ipv6;                       \
         ETHERTYPE_ARP : parse_arp_rarp;                    \
-        ETHERTYPE_RARP : parse_arp_rarp;                   \
-        ETHERTYPE_ROCE : parse_roce;                       \
-        ETHERTYPE_FCOE : parse_fcoe;                       \
-        ETHERTYPE_VNTAG : parse_vntag;                     \
         ETHERTYPE_LLDP  : parse_set_prio_high;             \
         ETHERTYPE_LACP  : parse_set_prio_high;             \
         default: ingress
@@ -79,7 +77,7 @@ parser start {
         ETHERTYPE_VNTAG : parse_vntag;                     \
         ETHERTYPE_LLDP  : parse_set_prio_high;             \
         ETHERTYPE_LACP  : parse_set_prio_high;             \
-        ETHERTYPE_SFLOW : parse_internal_sflow;            \
+        ETHERTYPE_BF_SFLOW : parse_bf_internal_sflow;      \
         default: ingress
 #endif
 
@@ -87,9 +85,12 @@ header ethernet_t ethernet;
 
 parser parse_ethernet {
     extract(ethernet);
+    set_metadata(l2_metadata.lkp_mac_sa, ethernet.srcAddr);
+    set_metadata(l2_metadata.lkp_mac_da, ethernet.dstAddr);
     return select(latest.etherType) {
         0 mask 0xfe00: parse_llc_header;
         0 mask 0xfa00: parse_llc_header;
+        ETHERTYPE_BF_FABRIC : parse_fabric_header;
         PARSE_ETHERTYPE;
     }
 }
@@ -144,6 +145,7 @@ parser parse_vlan {
 /* all the tags but the last one */
 header mpls_t mpls[MPLS_DEPTH];
 
+/* TODO: this will be optimized when pushed to the chip ? */
 parser parse_mpls {
     extract(mpls[next]);
     return select(latest.bos) {
@@ -154,10 +156,8 @@ parser parse_mpls {
 }
 
 parser parse_mpls_bos {
-    /*
-     * This will be enhanced to parse the
-     * inner header based on mpls label
-     */
+    //TODO: last keyword is not supported in compiler yet.
+    // replace mpls[0] to mpls[last]
     return select(current(0, 4)) {
         0x4 : parse_mpls_inner_ipv4;
         0x6 : parse_mpls_inner_ipv6;
@@ -166,12 +166,14 @@ parser parse_mpls_bos {
 }
 
 parser parse_mpls_inner_ipv4 {
-    set_metadata(tunnel_metadata.ingress_tunnel_type, TUNNEL_TYPE_MPLS_L3VPN);
+    set_metadata(tunnel_metadata.ingress_tunnel_type,
+                 INGRESS_TUNNEL_TYPE_MPLS_L3VPN);
     return parse_inner_ipv4;
 }
 
 parser parse_mpls_inner_ipv6 {
-    set_metadata(tunnel_metadata.ingress_tunnel_type, TUNNEL_TYPE_MPLS_L3VPN);
+    set_metadata(tunnel_metadata.ingress_tunnel_type,
+                 INGRESS_TUNNEL_TYPE_MPLS_L3VPN);
     return parse_inner_ipv6;
 }
 
@@ -205,6 +207,10 @@ parser parse_pw {
 #define IP_PROTOCOLS_IPHL_IPV6         0x529
 #define IP_PROTOCOLS_IPHL_GRE          0x52f
 
+/* Vxlan header decoding for INT */
+/* flags.p == 1 && next_proto == 5 */
+#define VXLAN_GPE_NEXT_PROTO_INT        0x0805 mask 0x08ff
+
 header ipv4_t ipv4;
 
 field_list ipv4_checksum_list {
@@ -230,20 +236,23 @@ field_list_calculation ipv4_checksum {
 }
 
 calculated_field ipv4.hdrChecksum  {
-    verify ipv4_checksum if(ipv4.ihl == 5);
-    update ipv4_checksum if(ipv4.ihl == 5);
+    verify ipv4_checksum if (ipv4.ihl == 5);
+    update ipv4_checksum if (ipv4.ihl == 5);
 }
 
 parser parse_ipv4 {
     extract(ipv4);
-    set_metadata(ingress_metadata.ipv4_dstaddr_24b, latest.dstAddr);
+    set_metadata(ipv4_metadata.lkp_ipv4_sa, ipv4.srcAddr);
+    set_metadata(ipv4_metadata.lkp_ipv4_da, ipv4.dstAddr);
+    set_metadata(l3_metadata.lkp_ip_proto, ipv4.protocol);
+    set_metadata(l3_metadata.lkp_ip_ttl, ipv4.ttl);
     return select(latest.fragOffset, latest.ihl, latest.protocol) {
         IP_PROTOCOLS_IPHL_ICMP : parse_icmp;
         IP_PROTOCOLS_IPHL_TCP : parse_tcp;
         IP_PROTOCOLS_IPHL_UDP : parse_udp;
         IP_PROTOCOLS_IPHL_GRE : parse_gre;
-        IP_PROTOCOLS_IPHL_IPV4 : parse_inner_ipv4;
-        IP_PROTOCOLS_IPHL_IPV6 : parse_inner_ipv6;
+        IP_PROTOCOLS_IPHL_IPV4 : parse_ipv4_in_ip;
+        IP_PROTOCOLS_IPHL_IPV6 : parse_ipv6_in_ip;
         IP_PROTOCOLS_IGMP : parse_set_prio_med;
         IP_PROTOCOLS_EIGRP : parse_set_prio_med;
         IP_PROTOCOLS_OSPF : parse_set_prio_med;
@@ -253,20 +262,35 @@ parser parse_ipv4 {
     }
 }
 
+parser parse_ipv4_in_ip {
+    set_metadata(tunnel_metadata.ingress_tunnel_type,
+                 INGRESS_TUNNEL_TYPE_IP_IN_IP);
+    return parse_inner_ipv4;
+}
+
+parser parse_ipv6_in_ip {
+    set_metadata(tunnel_metadata.ingress_tunnel_type,
+                 INGRESS_TUNNEL_TYPE_IP_IN_IP);
+    return parse_inner_ipv6;
+}
+
 header ipv6_t ipv6;
 
 parser parse_ipv6 {
     extract(ipv6);
+#if !defined(IPV6_DISABLE)
     set_metadata(ipv6_metadata.lkp_ipv6_sa, latest.srcAddr);
     set_metadata(ipv6_metadata.lkp_ipv6_da, latest.dstAddr);
+    set_metadata(l3_metadata.lkp_ip_proto, ipv6.nextHdr);
+    set_metadata(l3_metadata.lkp_ip_ttl, ipv6.hopLimit);
+#endif /* !defined(IPV6_DISABLE) */
     return select(latest.nextHdr) {
         IP_PROTOCOLS_ICMPV6 : parse_icmp;
         IP_PROTOCOLS_TCP : parse_tcp;
         IP_PROTOCOLS_UDP : parse_udp;
         IP_PROTOCOLS_GRE : parse_gre;
-        IP_PROTOCOLS_IPV4 : parse_inner_ipv4;
-        IP_PROTOCOLS_IPV6 : parse_inner_ipv6;
-
+        IP_PROTOCOLS_IPV4 : parse_ipv4_in_ip;
+        IP_PROTOCOLS_IPV6 : parse_ipv6_in_ip;
         IP_PROTOCOLS_EIGRP : parse_set_prio_med;
         IP_PROTOCOLS_OSPF : parse_set_prio_med;
         IP_PROTOCOLS_PIM : parse_set_prio_med;
@@ -280,13 +304,12 @@ header icmp_t icmp;
 
 parser parse_icmp {
     extract(icmp);
-    set_metadata(ingress_metadata.lkp_icmp_type, latest.type_);
-    set_metadata(ingress_metadata.lkp_icmp_code, latest.code);
-    return select(latest.type_) {
+    set_metadata(l3_metadata.lkp_l4_sport, latest.typeCode);
+    return select(latest.typeCode) {
         /* MLD and ND, 130-136 */
-        0x82 mask 0xfe : parse_set_prio_med;
-        0x84 mask 0xfc : parse_set_prio_med;
-        0x88 : parse_set_prio_med;
+        0x8200 mask 0xfe00 : parse_set_prio_med;
+        0x8400 mask 0xfc00 : parse_set_prio_med;
+        0x8800 mask 0xff00 : parse_set_prio_med;
         default: ingress;
     }
 }
@@ -298,8 +321,8 @@ header tcp_t tcp;
 
 parser parse_tcp {
     extract(tcp);
-    set_metadata(ingress_metadata.lkp_l4_sport, latest.srcPort);
-    set_metadata(ingress_metadata.lkp_l4_dport, latest.dstPort);
+    set_metadata(l3_metadata.lkp_l4_sport, latest.srcPort);
+    set_metadata(l3_metadata.lkp_l4_dport, latest.dstPort);
     return select(latest.dstPort) {
         TCP_PORT_BGP : parse_set_prio_med;
         TCP_PORT_MSDP : parse_set_prio_med;
@@ -317,6 +340,7 @@ parser parse_tcp {
 #define UDP_PORT_BFD                   3785
 #define UDP_PORT_LISP                  4341
 #define UDP_PORT_VXLAN                 4789
+#define UDP_PORT_VXLAN_GPE             4790
 #define UDP_PORT_ROCE_V2               4791
 #define UDP_PORT_GENV                  6081
 #define UDP_PORT_SFLOW                 6343
@@ -332,13 +356,17 @@ parser parse_roce_v2 {
 
 parser parse_udp {
     extract(udp);
-    set_metadata(ingress_metadata.lkp_l4_sport, latest.srcPort);
-    set_metadata(ingress_metadata.lkp_l4_dport, latest.dstPort);
+    set_metadata(l3_metadata.lkp_l4_sport, latest.srcPort);
+    set_metadata(l3_metadata.lkp_l4_dport, latest.dstPort);
     return select(latest.dstPort) {
         UDP_PORT_VXLAN : parse_vxlan;
         UDP_PORT_GENV: parse_geneve;
-        UDP_PORT_ROCE_V2: parse_roce_v2;
+#ifdef INT_ENABLE
+        /* vxlan-gpe is only supported in the context of INT at this time */
+        UDP_PORT_VXLAN_GPE : parse_vxlan_gpe;
+#endif
 #ifdef ADV_FEATURES
+        UDP_PORT_ROCE_V2: parse_roce_v2;
         UDP_PORT_LISP : parse_lisp;
         UDP_PORT_BFD : parse_bfd;
         UDP_PORT_SFLOW : parse_sflow;
@@ -354,6 +382,55 @@ parser parse_udp {
     }
 }
 
+#ifdef INT_ENABLE
+header int_header_t                             int_header;
+header int_switch_id_header_t                   int_switch_id_header;
+header int_ingress_port_id_header_t             int_ingress_port_id_header;
+header int_hop_latency_header_t                 int_hop_latency_header;
+header int_q_occupancy_header_t                 int_q_occupancy_header;
+header int_ingress_tstamp_header_t              int_ingress_tstamp_header;
+header int_egress_port_id_header_t              int_egress_port_id_header;
+header int_q_congestion_header_t                int_q_congestion_header;
+header int_egress_port_tx_utilization_header_t  int_egress_port_tx_utilization_header;
+header vxlan_gpe_int_header_t                   vxlan_gpe_int_header;
+
+parser parse_gpe_int_header {
+    /* GPE uses a shim header to preserve the next_protocol field */
+    extract(vxlan_gpe_int_header);
+    set_metadata(int_metadata.gpe_int_hdr_len, latest.len);
+    return parse_int_header;
+}
+parser parse_int_header {
+    extract(int_header);
+    set_metadata(int_metadata.instruction_cnt, latest.ins_cnt);
+    return select (latest.rsvd1, latest.total_hop_cnt) {
+        /* reserved bits = 0 and total_hop_cnt == 0 
+         * no int_values are added by upstream
+         */
+        0x000: ingress;
+        /* use an invalid value below so we never transition to the state */
+        0x100: parse_all_int_meta_value_heders;
+        default: ingress;
+    }
+}
+
+parser parse_all_int_meta_value_heders {
+    /* bogus state.. just extract all posiible int headers in the 
+     * correct order to build the correct parse graph for deparser 
+     */
+    extract(int_switch_id_header);
+    extract(int_ingress_port_id_header);
+    extract(int_hop_latency_header);
+    extract(int_q_occupancy_header);
+    extract(int_ingress_tstamp_header);
+    extract(int_egress_port_id_header);
+    extract(int_q_congestion_header);
+    extract(int_egress_port_tx_utilization_header);
+    return ingress;
+}
+
+#endif // INT_ENABLE
+
 header sctp_t sctp;
 
 parser parse_sctp {
@@ -362,8 +439,7 @@ parser parse_sctp {
 }
 
 #define GRE_PROTOCOLS_NVGRE            0x20006558
-#define GRE_PROTOCOLS_ERSPAN_V1        0x88BE
-#define GRE_PROTOCOLS_ERSPAN_V2        0x22EB
+#define GRE_PROTOCOLS_ERSPAN_T3        0x22EB   /* Type III version 2 */
 
 header gre_t gre;
 
@@ -374,8 +450,7 @@ parser parse_gre {
         GRE_PROTOCOLS_NVGRE : parse_nvgre;
         ETHERTYPE_IPV4 : parse_gre_ipv4;
         ETHERTYPE_IPV6 : parse_gre_ipv6;
-        GRE_PROTOCOLS_ERSPAN_V1 : parse_erspan_v1;
-        GRE_PROTOCOLS_ERSPAN_V2 : parse_erspan_v2;
+        GRE_PROTOCOLS_ERSPAN_T3 : parse_erspan_t3;
 #ifdef ADV_FEATURES
         ETHERTYPE_NSH : parse_nsh;
 #endif
@@ -384,12 +459,12 @@ parser parse_gre {
 }
 
 parser parse_gre_ipv4 {
-    set_metadata(tunnel_metadata.ingress_tunnel_type, TUNNEL_TYPE_GRE);
+    set_metadata(tunnel_metadata.ingress_tunnel_type, INGRESS_TUNNEL_TYPE_GRE);
     return parse_inner_ipv4;
 }
 
 parser parse_gre_ipv6 {
-    set_metadata(tunnel_metadata.ingress_tunnel_type, TUNNEL_TYPE_GRE);
+    set_metadata(tunnel_metadata.ingress_tunnel_type, INGRESS_TUNNEL_TYPE_GRE);
     return parse_inner_ipv6;
 }
 
@@ -398,8 +473,6 @@ header ethernet_t inner_ethernet;
 
 header ipv4_t inner_ipv4;
 header ipv6_t inner_ipv6;
-header ipv4_t outer_ipv4;
-header ipv6_t outer_ipv6;
 
 field_list inner_ipv4_checksum_list {
         inner_ipv4.version;
@@ -424,31 +497,25 @@ field_list_calculation inner_ipv4_checksum {
 }
 
 calculated_field inner_ipv4.hdrChecksum {
-    verify inner_ipv4_checksum if(valid(inner_ipv4));
-    update inner_ipv4_checksum if(valid(inner_ipv4));
+    verify inner_ipv4_checksum if (inner_ipv4.ihl == 5);
+    update inner_ipv4_checksum if (inner_ipv4.ihl == 5);
 }
 
 header udp_t outer_udp;
 
 parser parse_nvgre {
     extract(nvgre);
-    set_metadata(tunnel_metadata.ingress_tunnel_type, TUNNEL_TYPE_NVGRE);
+    set_metadata(tunnel_metadata.ingress_tunnel_type,
+                 INGRESS_TUNNEL_TYPE_NVGRE);
     set_metadata(tunnel_metadata.tunnel_vni, latest.tni);
     return parse_inner_ethernet;
 }
 
-header erspan_header_v1_t erspan_v1_header;
+header erspan_header_t3_t erspan_t3_header;
 
-parser parse_erspan_v1 {
-    extract(erspan_v1_header);
-    return ingress;
-}
-
-header erspan_header_v2_t erspan_v2_header;
-
-parser parse_erspan_v2 {
-    extract(erspan_v2_header);
-    return ingress;
+parser parse_erspan_t3 {
+    extract(erspan_t3_header);
+    return parse_inner_ethernet;
 }
 
 #define ARP_PROTOTYPES_ARP_RARP_IPV4 0x0800
@@ -474,7 +541,8 @@ header eompls_t eompls;
 
 parser parse_eompls {
     //extract(eompls);
-    set_metadata(tunnel_metadata.ingress_tunnel_type, TUNNEL_TYPE_MPLS_L2VPN);
+    set_metadata(tunnel_metadata.ingress_tunnel_type,
+                 INGRESS_TUNNEL_TYPE_MPLS_L2VPN);
     return parse_inner_ethernet;
 }
 
@@ -482,17 +550,34 @@ header vxlan_t vxlan;
 
 parser parse_vxlan {
     extract(vxlan);
-    set_metadata(tunnel_metadata.ingress_tunnel_type, TUNNEL_TYPE_VXLAN);
+    set_metadata(tunnel_metadata.ingress_tunnel_type,
+                 INGRESS_TUNNEL_TYPE_VXLAN);
     set_metadata(tunnel_metadata.tunnel_vni, latest.vni);
     return parse_inner_ethernet;
 }
+
+#ifdef INT_ENABLE
+header vxlan_gpe_t vxlan_gpe;
+
+parser parse_vxlan_gpe {
+    extract(vxlan_gpe);
+    set_metadata(tunnel_metadata.ingress_tunnel_type,
+                 INGRESS_TUNNEL_TYPE_VXLAN_GPE);
+    set_metadata(tunnel_metadata.tunnel_vni, latest.vni);
+    return select (vxlan_gpe.flags, vxlan_gpe.next_proto) {
+        VXLAN_GPE_NEXT_PROTO_INT : parse_gpe_int_header;
+        default : parse_inner_ethernet;
+    }
+}
+#endif
 
 header genv_t genv;
 
 parser parse_geneve {
     extract(genv);
     set_metadata(tunnel_metadata.tunnel_vni, latest.vni);
-    set_metadata(tunnel_metadata.ingress_tunnel_type, TUNNEL_TYPE_GENEVE);
+    set_metadata(tunnel_metadata.ingress_tunnel_type,
+                 INGRESS_TUNNEL_TYPE_GENEVE);
     return select(genv.ver, genv.optLen, genv.protoType) {
         ETHERTYPE_ETHERNET : parse_inner_ethernet;
         ETHERTYPE_IPV4 : parse_inner_ipv4;
@@ -540,8 +625,7 @@ header icmp_t inner_icmp;
 
 parser parse_inner_icmp {
     extract(inner_icmp);
-    set_metadata(ingress_metadata.lkp_inner_icmp_type, latest.type_);
-    set_metadata(ingress_metadata.lkp_inner_icmp_code, latest.code);
+    set_metadata(l3_metadata.lkp_inner_l4_sport, latest.typeCode);
     return ingress;
 }
 
@@ -549,8 +633,8 @@ header tcp_t inner_tcp;
 
 parser parse_inner_tcp {
     extract(inner_tcp);
-    set_metadata(ingress_metadata.lkp_inner_l4_sport, latest.srcPort);
-    set_metadata(ingress_metadata.lkp_inner_l4_dport, latest.dstPort);
+    set_metadata(l3_metadata.lkp_inner_l4_sport, latest.srcPort);
+    set_metadata(l3_metadata.lkp_inner_l4_dport, latest.dstPort);
     return ingress;
 }
 
@@ -558,9 +642,9 @@ header udp_t inner_udp;
 
 parser parse_inner_udp {
     extract(inner_udp);
-    set_metadata(ingress_metadata.lkp_inner_l4_sport, latest.srcPort);
-    set_metadata(ingress_metadata.lkp_inner_l4_dport, latest.dstPort);
-    return ingress;    
+    set_metadata(l3_metadata.lkp_inner_l4_sport, latest.srcPort);
+    set_metadata(l3_metadata.lkp_inner_l4_dport, latest.dstPort);
+    return ingress;
 }
 
 header sctp_t inner_sctp;
@@ -620,11 +704,60 @@ parser parse_sflow {
     return ingress;
 }
 
-parser parse_internal_sflow {
+parser parse_bf_internal_sflow {
     extract(sflow_internal_ethernet);
     extract(sflow_sample);
     extract(sflow_record);
     return ingress;
+}
+
+header fabric_header_t                 fabric_header;
+header fabric_header_unicast_t         fabric_header_unicast;
+header fabric_header_multicast_t       fabric_header_multicast;
+header fabric_header_mirror_t          fabric_header_mirror;
+header fabric_header_cpu_t             fabric_header_cpu;
+header fabric_payload_header_t         fabric_payload_header;
+
+parser parse_fabric_header {
+    extract(fabric_header);
+    return select(latest.packetType) {
+#ifdef FABRIC_ENABLE
+        FABRIC_HEADER_TYPE_UNICAST : parse_fabric_header_unicast;
+        FABRIC_HEADER_TYPE_MULTICAST : parse_fabric_header_multicast;
+        FABRIC_HEADER_TYPE_MIRROR : parse_fabric_header_mirror;
+#endif /* FABRIC_ENABLE */
+        FABRIC_HEADER_TYPE_CPU : parse_fabric_header_cpu;
+        default : ingress;
+    }
+}
+
+parser parse_fabric_header_unicast {
+    extract(fabric_header_unicast);
+    return parse_fabric_payload_header;
+}
+
+parser parse_fabric_header_multicast {
+    extract(fabric_header_multicast);
+    return parse_fabric_payload_header;
+}
+
+parser parse_fabric_header_mirror {
+    extract(fabric_header_mirror);
+    return parse_fabric_payload_header;
+}
+
+parser parse_fabric_header_cpu {
+    extract(fabric_header_cpu);
+    return parse_fabric_payload_header;
+}
+
+parser parse_fabric_payload_header {
+    extract(fabric_payload_header);
+    return select(latest.etherType) {
+        0 mask 0xfe00: parse_llc_header;
+        0 mask 0xfa00: parse_llc_header;
+        PARSE_ETHERTYPE;
+    }
 }
 
 #define CONTROL_TRAFFIC_PRIO_0         0
@@ -637,13 +770,16 @@ parser parse_internal_sflow {
 #define CONTROL_TRAFFIC_PRIO_7         7
 
 parser parse_set_prio_med {
+    set_metadata(intrinsic_metadata.priority, CONTROL_TRAFFIC_PRIO_3);
     return ingress;
 }
 
 parser parse_set_prio_high {
+    set_metadata(intrinsic_metadata.priority, CONTROL_TRAFFIC_PRIO_5);
     return ingress;
 }
 
 parser parse_set_prio_max {
+    set_metadata(intrinsic_metadata.priority, CONTROL_TRAFFIC_PRIO_7);
     return ingress;
 }

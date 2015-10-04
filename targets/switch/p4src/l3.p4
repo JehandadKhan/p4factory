@@ -1,5 +1,5 @@
 /*
-Copyright 2013-present Barefoot Networks, Inc.
+Copyright 2013-present Barefoot Networks, Inc. 
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,15 +15,26 @@ limitations under the License.
 */
 
 /*
+ * Layer-3 processing
+ */
+
+/*
  * L3 Metadata
  */
 
- header_type l3_metadata_t {
-     fields {
+header_type l3_metadata_t {
+    fields {
         lkp_ip_type : 2;
+        lkp_ip_version : 4;
         lkp_ip_proto : 8;
         lkp_ip_tc : 8;
         lkp_ip_ttl : 8;
+        lkp_l4_sport : 16;
+        lkp_l4_dport : 16;
+        lkp_inner_l4_sport : 16;
+        lkp_inner_l4_dport : 16;
+
+        vrf : VRF_BIT_WIDTH;                   /* VRF */
         rmac_group : 10;                       /* Rmac group, for rmac indirection */
         rmac_hit : 1;                          /* dst mac is the router's mac */
         urpf_mode : 2;                         /* urpf mode for current lookup */
@@ -33,29 +44,22 @@ limitations under the License.
         fib_hit : 1;                           /* fib hit */
         fib_nexthop : 16;                      /* next hop from fib */
         fib_nexthop_type : 1;                  /* ecmp or nexthop */
-        routed : 1;                            /* is packet routed */
-        nexthop_index : 16;                    /* final next hop index */
-     }
- }
-
- metadata l3_metadata_t l3_metadata;
-
-action fib_hit_nexthop(nexthop_index) {
-    modify_field(l3_metadata.fib_hit, TRUE);
-    modify_field(l3_metadata.fib_nexthop, nexthop_index);
-    modify_field(l3_metadata.fib_nexthop_type, NEXTHOP_TYPE_SIMPLE);
+        same_bd_check : BD_BIT_WIDTH;          /* ingress bd xor egress bd */
+        nexthop_index : 16;                    /* nexthop/rewrite index */
+        routed : 1;                            /* is packet routed? */
+        outer_routed : 1;                      /* is outer packet routed? */
+        mtu_index : 8;                         /* index into mtu table */
+    }
 }
 
-action fib_hit_ecmp(ecmp_index) {
-    modify_field(l3_metadata.fib_hit, TRUE);
-    modify_field(l3_metadata.fib_nexthop, ecmp_index);
-    modify_field(l3_metadata.fib_nexthop_type, NEXTHOP_TYPE_ECMP);
-}
+metadata l3_metadata_t l3_metadata;
 
+
+/*****************************************************************************/
+/* Router MAC lookup                                                         */
+/*****************************************************************************/
 action rmac_hit() {
     modify_field(l3_metadata.rmac_hit, TRUE);
-    modify_field(ingress_metadata.egress_ifindex, CPU_PORT_ID);
-    modify_field(intrinsic_metadata.eg_mcast_group, 0);
 }
 
 action rmac_miss() {
@@ -74,7 +78,27 @@ table rmac {
     size : ROUTER_MAC_TABLE_SIZE;
 }
 
+
+/*****************************************************************************/
+/* FIB hit actions for nexthops and ECMP                                     */
+/*****************************************************************************/
+action fib_hit_nexthop(nexthop_index) {
+    modify_field(l3_metadata.fib_hit, TRUE);
+    modify_field(l3_metadata.fib_nexthop, nexthop_index);
+    modify_field(l3_metadata.fib_nexthop_type, NEXTHOP_TYPE_SIMPLE);
+}
+
+action fib_hit_ecmp(ecmp_index) {
+    modify_field(l3_metadata.fib_hit, TRUE);
+    modify_field(l3_metadata.fib_nexthop, ecmp_index);
+    modify_field(l3_metadata.fib_nexthop_type, NEXTHOP_TYPE_ECMP);
+}
+
+
 #if !defined(L3_DISABLE) && !defined(URPF_DISABLE)
+/*****************************************************************************/
+/* uRPF BD check                                                             */
+/*****************************************************************************/
 action urpf_bd_miss() {
     modify_field(l3_metadata.urpf_check_fail, TRUE);
 }
@@ -105,31 +129,64 @@ control process_urpf_bd {
 #endif /* L3_DISABLE && URPF_DISABLE */
 }
 
-#if !defined(L3_DISABLE) && !defined(MTU_DISABLE)
-action mtu_check_pass() {
+
+/*****************************************************************************/
+/* Egress MAC rewrite                                                        */
+/*****************************************************************************/
+action rewrite_ipv4_unicast_mac(smac) {
+    modify_field(ethernet.srcAddr, smac);
+    modify_field(ethernet.dstAddr, egress_metadata.mac_da);
+    add_to_field(ipv4.ttl, -1);
 }
 
-action mtu_check_fail() {
-    modify_field(egress_metadata.drop_exception, 1);
+action rewrite_ipv4_multicast_mac(smac) {
+    modify_field(ethernet.srcAddr, smac);
+    modify_field(ethernet.dstAddr, 0x01005E000000, 0xFFFFFF800000);
+    add_to_field(ipv4.ttl, -1);
 }
 
-table mtu {
+action rewrite_ipv6_unicast_mac(smac) {
+    modify_field(ethernet.srcAddr, smac);
+    modify_field(ethernet.dstAddr, egress_metadata.mac_da);
+    add_to_field(ipv6.hopLimit, -1);
+}
+
+action rewrite_ipv6_multicast_mac(smac) {
+    modify_field(ethernet.srcAddr, smac);
+    modify_field(ethernet.dstAddr, 0x333300000000, 0xFFFF00000000);
+    add_to_field(ipv6.hopLimit, -1);
+}
+
+action rewrite_mpls_mac(smac) {
+    modify_field(ethernet.srcAddr, smac);
+    modify_field(ethernet.dstAddr, egress_metadata.mac_da);
+    add_to_field(mpls[0].ttl, -1);
+}
+
+table mac_rewrite {
     reads {
-        egress_metadata.bd : exact;
-        ethernet.etherType : exact;
-        //standard_metadata.packet_length : range;
+        egress_metadata.smac_idx : exact;
+        ipv4 : valid;
+        ipv6 : valid;
+        mpls[0] : valid;
     }
     actions {
         nop;
-        mtu_check_pass;
-        mtu_check_fail;
+        rewrite_ipv4_unicast_mac;
+        rewrite_ipv4_multicast_mac;
+#ifndef IPV6_DISABLE
+        rewrite_ipv6_unicast_mac;
+        rewrite_ipv6_multicast_mac;
+#endif /* IPV6_DISABLE */
+#ifndef MPLS_DISABLE
+        rewrite_mpls_mac;
+#endif /* MPLS_DISABLE */
     }
-    size : IP_MTU_TABLE_SIZE;
+    size : MAC_REWRITE_TABLE_SIZE;
 }
-#endif /* L3_DISABLE && MTU_DISABLE */
 
-control process_mtu {
-#if !defined(L3_DISABLE) && !defined(MTU_DISABLE)
-    apply(mtu);
-#endif /* L3_DISABLE && MTU_DISABLE */
+control process_mac_rewrite {
+    if (egress_metadata.routed == TRUE) {
+        apply(mac_rewrite);
+    }
 }

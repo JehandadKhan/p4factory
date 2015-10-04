@@ -1,5 +1,5 @@
 /*
-Copyright 2013-present Barefoot Networks, Inc.
+Copyright 2013-present Barefoot Networks, Inc. 
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,6 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+/*****************************************************************************/
+/* Egress filtering logic                                                    */
+/*****************************************************************************/
+#ifdef EGRESS_FILTER
 header_type egress_filter_metadata_t {
     fields {
         ifindex : IFINDEX_BIT_WIDTH;           /* src port filter */
@@ -27,9 +31,9 @@ action set_egress_ifindex(egress_ifindex) {
     bit_xor(egress_filter_metadata.ifindex, ingress_metadata.ifindex,
             egress_ifindex);
     bit_xor(egress_filter_metadata.bd, ingress_metadata.outer_bd,
-            egress_metadata.bd);
+            egress_metadata.outer_bd);
     bit_xor(egress_filter_metadata.inner_bd, ingress_metadata.bd,
-            ingress_metadata.egress_bd);
+            egress_metadata.bd);
 }
 
 table egress_lag {
@@ -50,14 +54,17 @@ table egress_filter {
         set_egress_filter_drop;
     }
 }
+#endif /* EGRESS_FILTER */
 
 control process_egress_filter {
+#ifdef EGRESS_FILTER
     apply(egress_lag);
     if (((tunnel_metadata.egress_tunnel_type != EGRESS_TUNNEL_TYPE_NONE) and
-         (egress_metadata.inner_replica == TRUE) and
+         (multicast_metadata.inner_replica == TRUE) and
          (egress_filter_metadata.inner_bd == 0)) or
         ((egress_filter_metadata.ifindex == 0) and
          (egress_filter_metadata.bd == 0))) {
         apply(egress_filter);
     }
+#endif /* EGRESS_FILTER */
 }

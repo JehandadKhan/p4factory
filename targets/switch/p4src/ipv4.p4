@@ -1,5 +1,5 @@
 /*
-Copyright 2013-present Barefoot Networks, Inc.
+Copyright 2013-present Barefoot Networks, Inc. 
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,40 +15,47 @@ limitations under the License.
 */
 
 /*
- * Ipv4 metadata
+ * IPv4 processing
  */
- header_type ipv4_metadata_t {
-     fields {
+
+/*
+ * IPv4 metadata
+ */
+header_type ipv4_metadata_t {
+    fields {
         lkp_ipv4_sa : 32;
         lkp_ipv4_da : 32;
-        ipv4_unicast_enabled : 1;              /* is ipv4 unicast routing enabled on BD */
-        ipv4_urpf_mode : 2;                    /* 0: none, 1: strict, 3: loose */
-     }
- }
+        ipv4_unicast_enabled : 1;      /* is ipv4 unicast routing enabled */
+        ipv4_urpf_mode : 2;            /* 0: none, 1: strict, 3: loose */
+    }
+}
 
 metadata ipv4_metadata_t ipv4_metadata;
 
 #if !defined(L3_DISABLE) && !defined(IPV4_DISABLE)
-/* VALIDATE_OUTER_IPV4_CONTROL_BLOCK */
+/*****************************************************************************/
+/* Validate outer IPv4 header                                                */
+/*****************************************************************************/
 action set_valid_outer_ipv4_packet() {
     modify_field(l3_metadata.lkp_ip_type, IPTYPE_IPV4);
-    modify_field(ipv4_metadata.lkp_ipv4_sa, ipv4.srcAddr);
-    modify_field(ipv4_metadata.lkp_ipv4_da, ipv4.dstAddr);
-    modify_field(l3_metadata.lkp_ip_proto, ipv4.protocol);
     modify_field(l3_metadata.lkp_ip_tc, ipv4.diffserv);
-    modify_field(l3_metadata.lkp_ip_ttl, ipv4.ttl);
+    modify_field(l3_metadata.lkp_ip_version, 4);
 }
 
-action set_malformed_outer_ipv4_packet() {
+action set_malformed_outer_ipv4_packet(drop_reason) {
+    modify_field(ingress_metadata.drop_flag, TRUE);
+    modify_field(ingress_metadata.drop_reason, drop_reason);
 }
 
 table validate_outer_ipv4_packet {
     reads {
-        ipv4.version : exact;
-        ipv4.ihl : exact;
-        ipv4.ttl : exact;
-        ipv4.srcAddr : ternary;
-        ipv4.dstAddr : ternary;
+        ipv4.version : ternary;
+        l3_metadata.lkp_ip_ttl : ternary;
+#ifndef __TARGET_BMV2__
+        ipv4_metadata.lkp_ipv4_sa mask 0xFF000000 : ternary;
+#else
+        ipv4_metadata.lkp_ipv4_sa : ternary;
+#endif
     }
     actions {
         set_valid_outer_ipv4_packet;
@@ -65,9 +72,12 @@ control validate_outer_ipv4_header {
 }
 
 #if !defined(L3_DISABLE) && !defined(IPV4_DISABLE)
+/*****************************************************************************/
+/* IPv4 FIB lookup                                                           */
+/*****************************************************************************/
 table ipv4_fib {
     reads {
-        ingress_metadata.vrf : exact;
+        l3_metadata.vrf : exact;
         ipv4_metadata.lkp_ipv4_da : exact;
     }
     actions {
@@ -80,7 +90,7 @@ table ipv4_fib {
 
 table ipv4_fib_lpm {
     reads {
-        ingress_metadata.vrf : exact;
+        l3_metadata.vrf : exact;
         ipv4_metadata.lkp_ipv4_da : lpm;
     }
     actions {
@@ -104,6 +114,9 @@ control process_ipv4_fib {
 }
 
 #if !defined(L3_DISABLE) && !defined(IPV4_DISABLE) && !defined(URPF_DISABLE)
+/*****************************************************************************/
+/* IPv4 uRPF lookup                                                          */
+/*****************************************************************************/
 action ipv4_urpf_hit(urpf_bd_group) {
     modify_field(l3_metadata.urpf_hit, TRUE);
     modify_field(l3_metadata.urpf_bd_group, urpf_bd_group);
@@ -112,7 +125,7 @@ action ipv4_urpf_hit(urpf_bd_group) {
 
 table ipv4_urpf_lpm {
     reads {
-        ingress_metadata.vrf : exact;
+        l3_metadata.vrf : exact;
         ipv4_metadata.lkp_ipv4_sa : lpm;
     }
     actions {
@@ -124,7 +137,7 @@ table ipv4_urpf_lpm {
 
 table ipv4_urpf {
     reads {
-        ingress_metadata.vrf : exact;
+        l3_metadata.vrf : exact;
         ipv4_metadata.lkp_ipv4_sa : exact;
     }
     actions {

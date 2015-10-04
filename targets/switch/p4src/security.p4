@@ -1,5 +1,5 @@
 /*
-Copyright 2013-present Barefoot Networks, Inc.
+Copyright 2013-present Barefoot Networks, Inc. 
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,18 +15,26 @@ limitations under the License.
 */
 
 /*
+ * Security related processing - Storm control, IPSG, etc.
+ */
+
+/*
  * security metadata
  */
 header_type security_metadata_t {
     fields {
         storm_control_color : 1;               /* 0 : pass, 1 : fail */
         ipsg_enabled : 1;                      /* is ip source guard feature enabled */
+        ipsg_check_fail : 1;                   /* ipsg check failed */
     }
 }
 
 metadata security_metadata_t security_metadata;
 
 #ifndef STORM_CONTROL_DISABLE
+/*****************************************************************************/
+/* Storm control                                                             */
+/*****************************************************************************/
 meter storm_control_meter {
     type : bytes;
     result : security_metadata.storm_control_color;
@@ -58,14 +66,17 @@ control process_storm_control {
 }
 
 #ifndef IPSG_DISABLE
+/*****************************************************************************/
+/* IP Source Guard                                                           */
+/*****************************************************************************/
 action ipsg_miss() {
-    modify_field(ingress_metadata.ipsg_check_fail, TRUE);
+    modify_field(security_metadata.ipsg_check_fail, TRUE);
 }
 
 table ipsg_permit_special {
     reads {
         l3_metadata.lkp_ip_proto : ternary;
-        ingress_metadata.lkp_l4_dport : ternary;
+        l3_metadata.lkp_l4_dport : ternary;
         ipv4_metadata.lkp_ipv4_da : ternary;
     }
     actions {

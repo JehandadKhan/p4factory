@@ -1,5 +1,5 @@
 /*
-Copyright 2013-present Barefoot Networks, Inc.
+Copyright 2013-present Barefoot Networks, Inc. 
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -141,8 +141,7 @@ header_type ipv6_t {
 
 header_type icmp_t {
     fields {
-        type_ : 8;
-        code : 8;
+        typeCode : 16;
         hdrChecksum : 16;
     }
 }
@@ -201,26 +200,15 @@ header_type nvgre_t {
     }
 }
 
-/* 8 bytes */
-header_type erspan_header_v1_t {
+/* erspan III header - 12 bytes */
+header_type erspan_header_t3_t {
     fields {
         version : 4;
         vlan : 12;
         priority : 6;
         span_id : 10;
-        direction : 8;
-        truncated: 8;
-    }
-}
-
-/* 8 bytes */
-header_type erspan_header_v2_t {
-    fields {
-        version : 4;
-        vlan : 12;
-        priority : 6;
-        span_id : 10;
-        unknown7 : 32;
+        timestamp : 32;
+        sgt_other : 32;
     }
 }
 
@@ -277,6 +265,16 @@ header_type vxlan_t {
     }
 }
 
+header_type vxlan_gpe_t {
+    fields {
+        flags : 8;
+        reserved : 16;
+        next_proto : 8;
+        vni : 24;
+        reserved2 : 8;
+    }
+}
+
 header_type nsh_t {
     fields {
         oam : 1;
@@ -298,61 +296,70 @@ header_type nsh_context_t {
     }
 }
 
-/* GENEVE HEADERS 
-   3 possible options with known type, known length */ 
- 
-header_type genv_t { 
-    fields { 
-        ver : 2; 
-        optLen : 6; 
-        oam : 1; 
-        critical : 1; 
-        reserved : 6; 
-        protoType : 16; 
-        vni : 24; 
-        reserved2 : 8; 
-    } 
-} 
- 
-#define GENV_OPTION_A_TYPE 0x000001 
-/* TODO: Would it be convenient to have some kind of sizeof macro ? */ 
-#define GENV_OPTION_A_LENGTH 2 /* in bytes */ 
- 
-header_type genv_opt_A_t { 
-    fields { 
-        optClass : 16; 
-        optType : 8; 
-        reserved : 3; 
-        optLen : 5; 
-        data : 32; 
-    } 
-} 
- 
-#define GENV_OPTION_B_TYPE 0x000002 
-#define GENV_OPTION_B_LENGTH 3 /* in bytes */ 
- 
-header_type genv_opt_B_t { 
-    fields { 
-        optClass : 16; 
-        optType : 8; 
-        reserved : 3; 
-        optLen : 5; 
-        data : 64; 
-    } 
-} 
- 
-#define GENV_OPTION_C_TYPE 0x000003 
-#define GENV_OPTION_C_LENGTH 2 /* in bytes */ 
- 
-header_type genv_opt_C_t { 
-    fields { 
-        optClass : 16; 
-        optType : 8; 
-        reserved : 3; 
-        optLen : 5; 
-        data : 32; 
-    } 
-} 
+header_type vxlan_gpe_int_header_t {
+    fields {
+        int_type    : 8;
+        rsvd        : 8;
+        len         : 8;
+        next_proto  : 8;
+    }
+}
+
+/* GENEVE HEADERS
+   3 possible options with known type, known length */
+
+header_type genv_t {
+    fields {
+        ver : 2;
+        optLen : 6;
+        oam : 1;
+        critical : 1;
+        reserved : 6;
+        protoType : 16;
+        vni : 24;
+        reserved2 : 8;
+    }
+}
+
+#define GENV_OPTION_A_TYPE 0x000001
+/* TODO: Would it be convenient to have some kind of sizeof macro ? */
+#define GENV_OPTION_A_LENGTH 2 /* in bytes */
+
+header_type genv_opt_A_t {
+    fields {
+        optClass : 16;
+        optType : 8;
+        reserved : 3;
+        optLen : 5;
+        data : 32;
+    }
+}
+
+#define GENV_OPTION_B_TYPE 0x000002
+#define GENV_OPTION_B_LENGTH 3 /* in bytes */
+
+header_type genv_opt_B_t {
+    fields {
+        optClass : 16;
+        optType : 8;
+        reserved : 3;
+        optLen : 5;
+        data : 64;
+    }
+}
+
+#define GENV_OPTION_C_TYPE 0x000003
+#define GENV_OPTION_C_LENGTH 2 /* in bytes */
+
+header_type genv_opt_C_t {
+    fields {
+        optClass : 16;
+        optType : 8;
+        reserved : 3;
+        optLen : 5;
+        data : 32;
+    }
+}
 
 header_type trill_t {
     fields {
@@ -453,5 +460,154 @@ header_type sflow_record_t {
         frameLength : 32;
         bytesRemoved : 32;
         headerSize : 32;
+    }
+}
+
+#define FABRIC_HEADER_TYPE_NONE        0
+#define FABRIC_HEADER_TYPE_UNICAST     1
+#define FABRIC_HEADER_TYPE_MULTICAST   2
+#define FABRIC_HEADER_TYPE_MIRROR      3
+#define FABRIC_HEADER_TYPE_CONTROL     4
+#define FABRIC_HEADER_TYPE_CPU         5
+
+header_type fabric_header_t {
+    fields {
+        packetType : 3;
+        headerVersion : 2;
+        packetVersion : 2;
+        pad1 : 1;
+
+        fabricColor : 3;
+        fabricQos : 5;
+
+        dstDevice : 8;
+        dstPortOrGroup : 16;
+
+        ingressIfindex : 16;
+        ingressBd : 16;
+    }
+}
+
+header_type fabric_header_unicast_t {
+    fields {
+        routed : 1;
+        outerRouted : 1;
+        tunnelTerminate : 1;
+        ingressTunnelType : 5;
+
+        nexthopIndex : 16;
+    }
+}
+
+header_type fabric_header_multicast_t {
+    fields {
+        routed : 1;
+        outerRouted : 1;
+        tunnelTerminate : 1;
+        ingressTunnelType : 5;
+        mcastGrp : 16;
+    }
+}
+
+header_type fabric_header_mirror_t {
+    fields {
+        rewriteIndex : 16;
+        egressPort : 10;
+        egressQueue : 5;
+        pad : 1;
+    }
+}
+
+header_type fabric_header_cpu_t {
+    fields {
+        egressQueue : 5;
+        txBypass : 1;
+        reserved : 2;
+
+        ingressPort: 16;
+        reasonCode : 16;
+    }
+}
+
+header_type fabric_payload_header_t {
+    fields {
+        etherType : 16;
+    }
+}
+
+/* INT headers */
+header_type int_header_t {
+    fields {
+        ver                     : 2;
+        rep                     : 2;
+        c                       : 1;
+        e                       : 1;
+        rsvd1                   : 5;
+        ins_cnt                 : 5;
+        max_hop_cnt             : 8;
+        total_hop_cnt           : 8;
+        instruction_mask_0003   : 4;   /* split the bits for lookup */
+        instruction_mask_0407   : 4;
+        instruction_mask_0811   : 4;
+        instruction_mask_1215   : 4;
+        rsvd2                   : 16;
+    }
+}
+
+/* INT meta-value headers - different header for each value type */
+header_type int_switch_id_header_t {
+    fields {
+        bos                 : 1;
+        switch_id           : 31;
+    }
+}
+header_type int_ingress_port_id_header_t {
+    fields {
+        bos                 : 1;
+        ingress_port_id     : 31;
+    }
+}
+header_type int_hop_latency_header_t {
+    fields {
+        bos                 : 1;
+        hop_latency         : 31;
+    }
+}
+header_type int_q_occupancy_header_t {
+    fields {
+        bos                 : 1;
+        q_occupancy         : 31;
+    }
+}
+header_type int_ingress_tstamp_header_t {
+    fields {
+        bos                 : 1;
+        ingress_tstamp      : 31;
+    }
+}
+header_type int_egress_port_id_header_t {
+    fields {
+        bos                 : 1;
+        egress_port_id      : 31;
+    }
+}
+header_type int_q_congestion_header_t {
+    fields {
+        bos                 : 1;
+        q_congestion        : 31;
+    }
+}
+header_type int_egress_port_tx_utilization_header_t {
+    fields {
+        bos                         : 1;
+        egress_port_tx_utilization  : 31;
+    }
+}
+
+/* generic int value (info) header for extraction */
+header_type int_value_t {
+    fields {
+        bos         : 1;
+        val         : 31;
     }
 }

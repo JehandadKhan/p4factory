@@ -1,5 +1,5 @@
 /*
-Copyright 2013-present Barefoot Networks, Inc.
+Copyright 2013-present Barefoot Networks, Inc. 
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -31,10 +31,23 @@ limitations under the License.
 #define IPTYPE_IPV4                            1
 #define IPTYPE_IPV6                            2
 
+/* Multicast modes */
+#define MCAST_MODE_NONE                        0
+#define MCAST_MODE_SM                          1
+#define MCAST_MODE_BIDIR                       2
+
+#define OUTER_MCAST_KEY_TYPE_BD                0
+#define OUTER_MCAST_KEY_TYPE_VRF               1
+
 /* URPF modes */
 #define URPF_MODE_NONE                         0
-#define URPF_MODE_LOOSE                        1 
+#define URPF_MODE_LOOSE                        1
 #define URPF_MODE_STRICT                       2
+
+/* NAT modes */
+#define NAT_MODE_NONE                          0
+#define NAT_MODE_INSIDE                        1
+#define NAT_MODE_OUTSIDE                       2
 
 /* Egress tunnel types */
 #define EGRESS_TUNNEL_TYPE_NONE                0
@@ -44,14 +57,16 @@ limitations under the License.
 #define EGRESS_TUNNEL_TYPE_IPV6_GENEVE         4
 #define EGRESS_TUNNEL_TYPE_IPV4_NVGRE          5
 #define EGRESS_TUNNEL_TYPE_IPV6_NVGRE          6
-#define EGRESS_TUNNEL_TYPE_IPV4_ERSPANV2       7
-#define EGRESS_TUNNEL_TYPE_IPV6_ERSPANV2       8
+#define EGRESS_TUNNEL_TYPE_IPV4_ERSPAN_T3      7
+#define EGRESS_TUNNEL_TYPE_IPV6_ERSPAN_T3      8
 #define EGRESS_TUNNEL_TYPE_IPV4_GRE            9
 #define EGRESS_TUNNEL_TYPE_IPV6_GRE            10
 #define EGRESS_TUNNEL_TYPE_IPV4_IP             11
 #define EGRESS_TUNNEL_TYPE_IPV6_IP             12
 #define EGRESS_TUNNEL_TYPE_MPLS_L2VPN          13
 #define EGRESS_TUNNEL_TYPE_MPLS_L3VPN          14
+#define EGRESS_TUNNEL_TYPE_FABRIC              15
+#define EGRESS_TUNNEL_TYPE_CPU                 16
 
 #define VRF_BIT_WIDTH                          12
 #define BD_BIT_WIDTH                           16
@@ -72,3 +87,14 @@ limitations under the License.
 #define NEXTHOP_TYPE_ECMP                      1
 
 #define INVALID_PORT_ID                        511
+
+/* ifindex to indicate flood */
+#define IFINDEX_FLOOD                          65535
+
+/* fabric device to indicate mutlicast */
+#define FABRIC_DEVICE_MULTICAST                127
+
+/* port type */
+#define PORT_TYPE_NORMAL                       0
+#define PORT_TYPE_FABRIC                       1
+#define PORT_TYPE_CPU                          2
