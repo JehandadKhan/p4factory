@@ -46,9 +46,9 @@ limitations under the License.
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#include <pd/pd.h>
-#include <thrift-src/pdfixed_rpc_server.h>
-#include <thrift-src/pd_rpc_server.h>
+#include <bmpd/l2_switch/pd/pd.h>
+#include <bm/pdfixed/thrift-src/pdfixed_rpc_server.h>
+#include <bmpd/l2_switch/thrift-src/pd_rpc_server.h>
 
 static char *pd_server_str = NULL;
 
@@ -128,9 +128,9 @@ main(int argc, char* argv[])
     add_to_rpc_server(pd_server_cookie);
 
     p4_pd_init();
-    p4_pd_l2_switch_init("ipc:///tmp/test_bm_learning.ipc",
-		  "ipc:///tmp/test_bm_ageing.ipc");
-    p4_pd_l2_switch_assign_device(0, 10001);
+    p4_pd_l2_switch_init();
+    p4_pd_l2_switch_assign_device(0, "ipc:///tmp/bmv2-0-notifications.ipc",
+                                  10001);
 
     while (1) pause();
 

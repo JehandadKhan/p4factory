@@ -63,38 +63,47 @@ ifndef SUBMODULE_P4C_BM
   endif
 endif
 
-ifndef SUBMODULE_P4C_GRAPHS
+ifndef SUBMODULE_P4_BUILD
   ifdef SUBMODULES
-    SUBMODULE_P4C_GRAPHS := $(SUBMODULES)/p4c-graphs
+    SUBMODULE_P4_BUILD := $(SUBMODULES)/p4-build
   else
-    SUBMODULE_P4C_GRAPHS := $(ROOT)/submodules/p4c-graphs
-    SUBMODULES_LOCAL += p4c-graphs
+    SUBMODULE_P4_BUILD := $(ROOT)/submodules/p4-build
+    SUBMODULES_LOCAL += p4-build
+  endif
+endif
+
+ifndef SUBMODULE_SWITCH
+  ifdef SUBMODULES
+    SUBMODULE_SWITCH := $(SUBMODULES)/switch
+  else
+    SUBMODULE_SWITCH := $(ROOT)/submodules/switch
+    SUBMODULES_LOCAL += switch
   endif
 endif
 
 ifndef SUBMODULE_SWITCHAPI
   ifdef SUBMODULES
-    SUBMODULE_SWITCHAPI := $(SUBMODULES)/switchapi
+    SUBMODULE_SWITCHAPI := $(SUBMODULES)/switch/switchapi
   else
-    SUBMODULE_SWITCHAPI := $(ROOT)/submodules/switchapi
+    SUBMODULE_SWITCHAPI := $(ROOT)/submodules/switch/switchapi
     SUBMODULES_LOCAL += switchapi
   endif
 endif
 
 ifndef SUBMODULE_SWITCHSAI
   ifdef SUBMODULES
-    SUBMODULE_SWITCHSAI := $(SUBMODULES)/switchsai
+    SUBMODULE_SWITCHSAI := $(SUBMODULES)/switch/switchsai
   else
-    SUBMODULE_SWITCHSAI := $(ROOT)/submodules/switchsai
+    SUBMODULE_SWITCHSAI := $(ROOT)/submodules/switch/switchsai
     SUBMODULES_LOCAL += switchsai
   endif
 endif
 
 ifndef SUBMODULE_SWITCHLINK
   ifdef SUBMODULES
-    SUBMODULE_SWITCHLINK:= $(SUBMODULES)/switchlink
+    SUBMODULE_SWITCHLINK:= $(SUBMODULES)/switch/switchlink
   else
-	SUBMODULE_SWITCHLINK := $(ROOT)/submodules/switchlink
+	SUBMODULE_SWITCHLINK := $(ROOT)/submodules/switch/switchlink
     SUBMODULES_LOCAL += switchlink
   endif
 endif
@@ -122,6 +131,7 @@ export SUBMODULE_BM
 export SUBMODULE_OFT_INFRA
 export SUBMODULE_P4C_BEHAVIORAL
 export SUBMODULE_P4C_BM
+export SUBMODULE_P4_BUILD
 export SUBMODULE_P4C_GRAPHS
 export SUBMODULE_SWITCHAPI
 export SUBMODULE_SWITCHSAI
@@ -135,6 +145,7 @@ MODULE_DIRS := $(ROOT)/modules
 	@echo oft_infra @ $(SUBMODULE_OFT_INFRA)
 	@echo p4c_behavioral @ $(SUBMODULE_P4C_BEHAVIORAL)
 	@echo p4c_bm @ $(SUBMODULE_P4C_BM)
+	@echo p4_build @ $(SUBMODULE_P4_BUILD)
 	@echo p4c_graphs @ $(SUBMODULE_P4C_GRAPHS)
 	@echo switchapi @ $(SUBMODULE_SWITCHAPI)
 	@echo switchsai @ $(SUBMODULE_SWITCHSAI)

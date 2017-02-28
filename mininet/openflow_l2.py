@@ -40,6 +40,8 @@ import argparse
 parser = argparse.ArgumentParser(description='Mininet demo')
 parser.add_argument('--controller-ip', help='IPv4 address of openflow controller',
                     type=str, action="store", required=True)
+parser.add_argument('--cli', help='IPv4 address of openflow controller',
+                    action="store_true", default=False, required=False)
 
 parser_args = parser.parse_args()
 
@@ -50,11 +52,13 @@ from thrift.protocol import TBinaryProtocol
 from thrift.protocol import TMultiplexedProtocol
 
 root_dir = os.path.dirname(os.path.realpath(__file__))
-pd_dir = os.path.join(root_dir, '../targets/switch/of-tests/pd_thrift')
-oft_infra_dir = os.path.join(root_dir, '..', 'submodules', 'oft-infra')
+pd_dir = os.path.join(root_dir, '../targets/switch/tests/pd_thrift')
+ptf_dir = os.path.join(root_dir, '..', 'submodules', 'ptf')
+utils_dir = os.path.join(root_dir, '..', 'testutils')
 
 sys.path.append(pd_dir)
-sys.path.append(oft_infra_dir)
+sys.path.append(ptf_dir)
+sys.path.append(utils_dir)
 
 from p4_pd_rpc.ttypes import *
 from res_pd_rpc.ttypes import *
@@ -65,26 +69,34 @@ def setup_bd(client, conn_mgr):
     Instantiates port_vlan_mapping table entry setting bd == 0
     for untagged packets on ifindex 1.
     """
-    sess_hdl = conn_mgr.client_init(16)
+    sess_hdl = conn_mgr.client_init()
     dev_tgt = DevTarget_t(0, hex_to_i16(0xffff))
-    ifindices = [1, 2]
+    ifindices = [1, 2, 65]
 
     for ifindex in ifindices:
-        action_spec = dc_set_bd_action_spec_t(
+        action_spec = dc_set_bd_properties_action_spec_t(
                                 action_bd=0,
                                 action_vrf=0,
                                 action_rmac_group=0,
-                                action_ipv4_unicast_enabled=True,
-                                action_ipv6_unicast_enabled=True,
                                 action_bd_label=0,
+                                action_ipv4_unicast_enabled=True,
+                                action_ipv6_unicast_enabled=False,
+                                action_ipv4_multicast_enabled=False,
+                                action_ipv6_multicast_enabled=False,
                                 action_igmp_snooping_enabled=0,
                                 action_mld_snooping_enabled=0,
                                 action_ipv4_urpf_mode=0,
                                 action_ipv6_urpf_mode=0,
                                 action_stp_group=0,
-                                action_stats_idx=0)
+                                action_mrpf_group=0,
+                                action_ipv4_mcast_key_type=0,
+                                action_ipv4_mcast_key=0,
+                                action_ipv6_mcast_key_type=0,
+                                action_ipv6_mcast_key=0,
+                                action_stats_idx=0,
+                                action_learning_enabled=0)
         
-        mbr_hdl = client.bd_action_profile_add_member_with_set_bd(
+        mbr_hdl = client.bd_action_profile_add_member_with_set_bd_properties(
                                 sess_hdl, dev_tgt,
                                 action_spec)
         match_spec = dc_port_vlan_mapping_match_spec_t(
@@ -131,6 +143,7 @@ class OpenflowEnabledP4Switch(P4Switch):
         args = [self.sw_path]
         args.extend(['--of-ip', parser_args.controller_ip])
         args.extend(['--no-veth'])
+        args.extend(['-t'])
         for intf in self.intfs.values():
             if not intf.IP():
                 args.extend( ['-i', intf.name] )
@@ -178,8 +191,39 @@ def main():
 
     print "Ready !"
 
-    CLI( net )
+    result = 0
+    if parser_args.cli:
+        CLI( net )
+    else:
+        time.sleep(3)
+
+        node_values = net.values()
+        print node_values
+
+        hosts = net.hosts
+        print hosts
+
+        # ping hosts
+        print "PING BETWEEN THE HOSTS"
+        result = net.ping(hosts,30)
+
+        # print host arp table & routes
+        for host in hosts:
+            print "ARP ENTRIES ON HOST"
+            print host.cmd('arp -n')
+            print "HOST ROUTES"
+            print host.cmd('route')
+            print "HOST INTERFACE LIST"
+            intfList = host.intfNames()
+            print intfList
+
+        if result != 0:
+                print "PING FAILED BETWEEN HOSTS %s"  % (hosts)
+        else:
+            print "PING SUCCESSFUL!!!"
+
     net.stop()
+    return result
 
 if __name__ == '__main__':
     setLogLevel( 'info' )

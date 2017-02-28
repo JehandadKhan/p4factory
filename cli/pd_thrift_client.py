@@ -53,7 +53,7 @@ class ThriftClient(object):
     self._utils = importlib.import_module("utils")
 
     self.setup(hostname, port)
-    self._session_handle = self._conn_mgr.client_init(16)
+    self._session_handle = self._conn_mgr.client_init()
     from res_pd_rpc.ttypes import DevTarget_t
     self._dev_target = DevTarget_t(0, self._utils.hex_to_i16(0xFFFF))
 
@@ -161,7 +161,8 @@ class ThriftClient(object):
     return self.get_get_next_entry_handles_function(table_name)(self._session_handle, self._dev_target.dev_id, entry_handle, n)
 
   def show_entry(self, table_name, entry_handle):
-    return self.get_show_entry_function(table_name)(self._session_handle, self._dev_target.dev_id, entry_handle)
+    # 4096 is the max_length for returned string
+    return self.get_show_entry_function(table_name)(self._session_handle, self._dev_target.dev_id, entry_handle, 4096)
 
   def get_match_spec(self, table_name, match_spec_tuple):
     match_spec_class = self.get_spec_class(table_name, ThriftClient.MATCH_SPEC_T)
@@ -179,15 +180,45 @@ class ThriftClient(object):
       if parameter_type == thrift.Thrift.TType.STRING:
         is_success = False
         try:
-          spec_parameters.append(self._utils.macAddr_to_string(spec_string[i - 1]))
-          is_success = True
+          parameter = self._utils.macAddr_to_string(spec_string[i - 1])
+          if len(parameter) == 6:
+            spec_parameters.append(parameter)
+            is_success = True
         except:
           pass
         if not is_success:
           try:
-            spec_parameters.append(socket.inet_pton(socket.AF_INET6, spec_string[i - 1]))
-          except socket.error:
-            raise ValueError("Cannot parse %s to TType.STRING" % spec_string[i - 1])
+            parameter = socket.inet_pton(socket.AF_INET6, spec_string[i - 1])
+            if len(parameter) == 16:
+              spec_parameters.append(parameter)
+              is_success = True
+          except:
+            pass
+        if not is_success:
+          parameter = spec_string[i - 1]
+          try:
+            width, v = parameter.split('w')
+            width = int(width)
+            assert(width > 0)
+            v = int(v, 0)
+          except:
+            print "Make sure you prepend the length (in bytes) of the field"
+            print "A valid input is 8w0x55 for a 64-bit field set to 0x55"
+            raise ValueError("Cannot parse %s to TType.STRING" % parameter)
+          array = []
+          while v > 0:
+            array.append(v % 256)
+            v /= 256
+            width -= 1
+          if width < 0:
+            print "Value overflow"
+            raise ValueError("Cannot parse %s to TType.STRING" % parameter)
+          while width > 0:
+            array.append(0)
+            width -= 1
+          array.reverse()
+          parameter = self._utils.bytes_to_string(array)
+          spec_parameters.append(parameter)
       if parameter_type == thrift.Thrift.TType.BYTE:
         spec_parameters.append(self._utils.hex_to_byte(spec_string[i - 1]))
       if parameter_type == thrift.Thrift.TType.I16:
@@ -201,8 +232,9 @@ class ThriftClient(object):
         except:
           pass
         if not is_success:
+          parameter = int(spec_string[i - 1], 0)
           try:
-            spec_parameters.append(self._utils.hex_to_i32(spec_string[i - 1]))
+            spec_parameters.append(self._utils.hex_to_i32(parameter))
           except socket.error:
             raise ValueError("Cannot parse %s to TType.I32" % spec_string[i - 1])
 

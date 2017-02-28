@@ -46,9 +46,9 @@ limitations under the License.
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#include <pd/pd.h>
-#include <thrift-src/pdfixed_rpc_server.h>
-#include <thrift-src/pd_rpc_server.h>
+#include <bmpd/switch/pd/pd.h>
+#include <bm/pdfixed/thrift-src/pdfixed_rpc_server.h>
+#include <bmpd/switch/thrift-src/pd_rpc_server.h>
 
 static char *pd_server_str = NULL;
 
@@ -79,8 +79,8 @@ extern int start_switch_api_packet_driver(void);
 #endif /* SWITCHAPI_ENABLE */
 
 #ifdef SWITCHSAI_ENABLE
-#define SWITCH_SAI_THRIFT_RPC_SERVER_PORT 9092
-extern int start_p4_sai_thrift_rpc_server(int port);
+#define SWITCH_SAI_THRIFT_RPC_SERVER_PORT "9092"
+extern int start_p4_sai_thrift_rpc_server(char *port);
 #endif /* SWITCHSAI_ENABLE */
 
 static void
@@ -139,9 +139,8 @@ main(int argc, char* argv[])
     add_to_rpc_server(pd_server_cookie);
 
     p4_pd_init();
-    p4_pd_dc_init("ipc:///tmp/test_bm_learning.ipc",
-		  "ipc:///tmp/test_bm_ageing.ipc");
-    p4_pd_dc_assign_device(0, 10001);
+    p4_pd_dc_init();
+    p4_pd_dc_assign_device(0, "ipc:///tmp/bmv2-0-notifications.ipc", 10001);
 
     /* Start up the API RPC server */
 #ifdef SWITCHAPI_ENABLE
